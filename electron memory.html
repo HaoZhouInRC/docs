@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-TF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electron 内存管理交互式指南</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+        }
+        .sticky-nav {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .content-section {
+            padding-top: 4rem; /* Adjust based on nav height */
+            margin-top: -4rem; /* Adjust based on nav height */
+        }
+        .interactive-card {
+            transition: all 0.3s ease-in-out;
+        }
+        .interactive-card .details {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.5s ease-in-out;
+        }
+        .interactive-card.open .details {
+            max-height: 1000px; /* Adjust as needed */
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        h2 {
+            font-size: 1.875rem; /* text-3xl */
+            font-weight: 700;
+            margin-bottom: 1.5rem; /* mb-6 */
+            color: #1f2937; /* text-gray-800 */
+        }
+        h3 {
+            font-size: 1.5rem; /* text-2xl */
+            font-weight: 600;
+            margin-top: 2rem; /* mt-8 */
+            margin-bottom: 1rem; /* mb-4 */
+            color: #2563eb; /* text-sky-600 */
+        }
+        p, li {
+            line-height: 1.75;
+            color: #374151; /* text-gray-700 */
+        }
+        .code-block {
+            background-color: #1f2937; /* bg-gray-800 */
+            color: #d1d5db; /* text-gray-300 */
+            padding: 1rem;
+            border-radius: 0.5rem; /* rounded-lg */
+            overflow-x: auto;
+            font-family: monospace;
+        }
+        .tab-button {
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .tab-button.active {
+            background-color: #2563eb; /* bg-sky-600 */
+            color: white;
+        }
+        .optimization-tip {
+            cursor: pointer;
+        }
+        .optimization-tip .tip-content {
+            display: none;
+            margin-top: 0.5rem;
+            padding-left: 1rem;
+            border-left: 2px solid #2563eb; /* border-sky-600 */
+        }
+        .optimization-tip.active .tip-content {
+            display: block;
+        }
+        .optimization-tip .arrow {
+            transition: transform 0.3s;
+        }
+        .optimization-tip.active .arrow {
+            transform: rotate(90deg);
+        }
+
+    </style>
+    <!-- Visualization & Content Choices: 
+        1. Memory Concepts: HTML cards (expandable) + HTML/CSS diagram for relationships. Goal: Inform. Lib: HTML/CSS/JS.
+        2. Paging/Swapping Impact: Text + Bar chart (Chart.js) for I/O speeds. Goal: Explain impact. Lib: HTML, Chart.js.
+        3. Electron Monitoring: Formatted text for APIs (e.g., process.memoryUsage() output), grouped lists for OS tools. Goal: Inform. Lib: HTML/CSS.
+        4. Optimization: Expandable lists for tips. Goal: Actionable advice. Lib: HTML/CSS/JS.
+        CONFIRMATION: NO SVG graphics used. NO Mermaid JS used.
+    -->
+</head>
+<body class="bg-neutral-100 text-neutral-800">
+
+    <nav class="sticky-nav bg-white/80 shadow-md">
+        <div class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <a href="#" class="text-xl font-semibold text-sky-700">Electron内存指南</a>
+            <div class="space-x-4">
+                <a href="#introduction" class="text-neutral-700 hover:text-sky-600">引言</a>
+                <a href="#concepts" class="text-neutral-700 hover:text-sky-600">核心概念</a>
+                <a href="#paging-swapping" class="text-neutral-700 hover:text-sky-600">Paging/Swapping</a>
+                <a href="#monitoring" class="text-neutral-700 hover:text-sky-600">监控</a>
+                <a href="#optimization" class="text-neutral-700 hover:text-sky-600">优化</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto px-6 py-12">
+        <section id="introduction" class="content-section mb-16 scroll-mt-20">
+            <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">深入理解 Node.js 和 Electron 的内存管理</h2>
+            <p class="text-lg text-gray-700 leading-relaxed max-w-3xl mx-auto text-center">
+                在开发 Node.js 应用，特别是基于 Electron 的桌面应用时，内存管理是性能优化的核心。理解进程的内存组成及其与操作系统交互的方式至关重要。本指南将帮助您深入理解这些概念，并学习如何监控和优化您的应用，以避免常见的性能陷阱。
+            </p>
+        </section>
+
+        <section id="concepts" class="content-section mb-16 scroll-mt-20">
+            <h2 class="text-center">核心内存概念</h2>
+            <p class="text-center mb-10 max-w-2xl mx-auto">点击下方的卡片来了解更多关于堆内存、常驻内存和虚拟内存的信息及其相互关系。</p>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="interactive-card bg-white p-6 rounded-lg shadow-lg hover:shadow-xl cursor-pointer" onclick="toggleCard(this)">
+                    <h3 class="text-sky-600 !mt-0">堆内存 (Heap Memory)</h3>
+                    <p class="mb-2">V8 引擎管理的主要内存区域，用于存储 JavaScript 对象、数组、函数等动态分配的数据。</p>
+                    <div class="details text-sm text-gray-600">
+                        <p><strong>关键点:</strong></p>
+                        <ul class="list-disc list-inside ml-4 mt-2">
+                            <li>通过 `process.memoryUsage().heapUsed` 查看已用堆内存。</li>
+                            <li>通过 `process.memoryUsage().heapTotal` 查看 V8 已分配的堆内存总量。</li>
+                            <li>垃圾回收机制 (GC) 在此区域工作以释放不再使用的内存。</li>
+                            <li>不当的编码习惯可能导致堆内存泄漏。</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="interactive-card bg-white p-6 rounded-lg shadow-lg hover:shadow-xl cursor-pointer" onclick="toggleCard(this)">
+                    <h3 class="text-sky-600 !mt-0">常驻内存 (RSS)</h3>
+                    <p class="mb-2">进程在物理内存 (RAM) 中实际占用的非交换区域的大小。Node.js 的堆内存会计入 RSS。</p>
+                    <div class="details text-sm text-gray-600">
+                        <p><strong>关键点:</strong></p>
+                        <ul class="list-disc list-inside ml-4 mt-2">
+                            <li>通过 `process.memoryUsage().rss` 查看。</li>
+                            <li>包括代码段、数据段、堆、栈及共享库。</li>
+                            <li>RSS 过高可能预示着内存压力和潜在的 Paging/Swapping。</li>
+                            <li>是衡量应用实际物理内存占用的重要指标。</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="interactive-card bg-white p-6 rounded-lg shadow-lg hover:shadow-xl cursor-pointer" onclick="toggleCard(this)">
+                    <h3 class="text-sky-600 !mt-0">虚拟内存 (Virtual Memory)</h3>
+                    <p class="mb-2">操作系统为每个进程提供的逻辑上连续且独立的地址空间，通常比物理内存大。</p>
+                    <div class="details text-sm text-gray-600">
+                        <p><strong>关键点:</strong></p>
+                        <ul class="list-disc list-inside ml-4 mt-2">
+                            <li>允许运行大于物理内存的程序。</li>
+                            <li>通过分页机制映射到物理内存或磁盘交换空间。</li>
+                            <li>MMU (内存管理单元) 负责地址转换。</li>
+                            <li>为进程提供内存隔离和保护。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-12 p-6 bg-sky-50 rounded-lg shadow">
+                <h4 class="text-xl font-semibold text-sky-700 mb-3">概念关系简述：</h4>
+                <p class="text-gray-700">虚拟内存是程序看到的广阔内存空间。其中一部分（活跃数据和代码）会被加载到物理内存中，这部分就是常驻内存 (RSS)。而堆内存是 JavaScript 对象等动态数据在虚拟内存（并最终在 RSS）中占据的一块特定区域。</p>
+                <div class="mt-4 flex flex-col items-center space-y-2 md:flex-row md:space-y-0 md:space-x-4 md:justify-center text-center">
+                    <div class="p-3 border-2 border-sky-300 rounded bg-white shadow text-sm w-full md:w-auto">程序视角: 虚拟内存 (广阔)</div>
+                    <div class="text-sky-500 text-2xl font-bold">&rarr;</div>
+                    <div class="p-3 border-2 border-emerald-300 rounded bg-white shadow text-sm w-full md:w-auto">物理内存映射: 常驻内存 (RSS)</div>
+                    <div class="text-emerald-500 text-2xl font-bold">&supseteq;</div>
+                    <div class="p-3 border-2 border-amber-300 rounded bg-white shadow text-sm w-full md:w-auto">JS对象区域: 堆内存</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="paging-swapping" class="content-section mb-16 scroll-mt-20">
+            <h2 class="text-center">Paging 与 Swapping：性能杀手</h2>
+            <p class="text-center mb-6 max-w-2xl mx-auto">当应用所需数据不在物理内存时，操作系统会进行 Paging 或 Swapping，这会严重影响性能。</p>
+            <div class="grid md:grid-cols-2 gap-8 items-start">
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h3 class="!mt-0">页面调度 (Paging)</h3>
+                    <p>当程序尝试访问一个不在物理内存中的虚拟内存页时，会发生“页面错误 (Page Fault)”。操作系统暂停程序，从磁盘加载该页到物理内存，然后恢复程序。这个过程涉及磁盘 I/O，速度远慢于内存访问。</p>
+                    <p class="mt-2">频繁的页面错误会导致“颠簸 (Thrashing)”，系统大部分时间都在进行磁盘读写，而非执行程序逻辑，性能急剧下降。</p>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h3 class="!mt-0">进程交换 (Swapping)</h3>
+                    <p>这是一种更“重量级”的操作，指将整个进程（或其大部分）从物理内存移到磁盘交换空间，或反之。通常在物理内存极度紧张时发生。</p>
+                    <p class="mt-2">由于涉及大量数据传输，Swapping 导致的延迟比 Paging 更长，产生巨大的磁盘 I/O 负载，使系统响应非常迟钝。</p>
+                </div>
+            </div>
+             <div class="mt-12 bg-white p-6 rounded-lg shadow-lg">
+                <h3 class="!mt-0 text-center">为什么性能会下降？I/O 速度对比</h3>
+                <p class="text-center mb-6">磁盘 I/O 的速度远慢于内存访问速度是根本原因。下图展示了典型访问时间的数量级差异：</p>
+                <div class="chart-container">
+                    <canvas id="ioSpeedChart"></canvas>
+                </div>
+                <p class="text-center mt-4 text-sm text-gray-600">注意：具体数值可能因硬件而异，此处仅为数量级示意。</p>
+            </div>
+        </section>
+
+        <section id="monitoring" class="content-section mb-16 scroll-mt-20">
+            <h2 class="text-center">Electron 中的内存监控</h2>
+            <p class="text-center mb-10 max-w-2xl mx-auto">有效监控是发现和解决内存问题的第一步。Electron 应用可以通过内置 API 和操作系统工具进行监控。</p>
+            
+            <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
+                <h3 class="!mt-0">Electron 内置 API</h3>
+                <div class="mb-6">
+                    <h4 class="text-xl font-semibold text-gray-700 mb-2">1. `process.memoryUsage()`</h4>
+                    <p>在主进程中使用，返回一个包含应用内存使用信息的对象（字节为单位）：</p>
+                    <ul class="list-disc list-inside ml-4 mt-2 mb-2">
+                        <li>`rss`: 常驻内存大小。</li>
+                        <li>`heapTotal`: V8 总共分配的堆内存。</li>
+                        <li>`heapUsed`: V8 当前已使用的堆内存。</li>
+                        <li>`external`: V8 管理的 C++ 对象的内存（如 Buffer）。</li>
+                        <li>`arrayBuffers`: `ArrayBuffer` 和 `SharedArrayBuffer` 的内存。</li>
+                    </ul>
+                    <p class="font-semibold">示例输出:</p>
+                    <pre class="code-block mt-2 text-sm"><code>{
+  rss: 49356800,           // ~47 MB
+  heapTotal: 18268160,     // ~17.4 MB
+  heapUsed: 9504720,       // ~9.06 MB
+  external: 1498790,       // ~1.43 MB
+  arrayBuffers: 93860      // ~0.09 MB
+}</code></pre>
+                </div>
+                <div>
+                    <h4 class="text-xl font-semibold text-gray-700 mb-2">2. `app.getAppMetrics()`</h4>
+                    <p>提供更详细的进程度量信息，包括 CPU 使用率和不同类型的内存指标（如工作集、私有字节等，具体因操作系统而异）。</p>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-lg">
+                <h3 class="!mt-0">操作系统级工具</h3>
+                <p class="mb-4">结合操作系统工具能更直接地观察 Paging/Swapping 行为：</p>
+                <div id="osToolsTabs" class="mb-4 flex border-b border-gray-300">
+                    <button class="tab-button py-2 px-4 text-gray-600 hover:text-sky-600 focus:outline-none active" onclick="showOsToolTab(this, 'windows')">Windows</button>
+                    <button class="tab-button py-2 px-4 text-gray-600 hover:text-sky-600 focus:outline-none" onclick="showOsToolTab(this, 'macos')">macOS</button>
+                    <button class="tab-button py-2 px-4 text-gray-600 hover:text-sky-600 focus:outline-none" onclick="showOsToolTab(this, 'linux')">Linux</button>
+                </div>
+                <div id="osToolsContent">
+                    <div id="windows-tab" class="os-tool-tab">
+                        <ul class="list-disc list-inside space-y-1">
+                            <li><strong>任务管理器:</strong> 查看内存使用和交换文件情况。</li>
+                            <li><strong>资源监视器:</strong> 查看每个进程的“硬错误/秒”(Hard Faults/s)，直接对应页面错误。</li>
+                            <li><strong>Perfmon (性能监视器):</strong> 添加“页面输入/秒”、“页面输出/秒”等计数器。</li>
+                        </ul>
+                    </div>
+                    <div id="macos-tab" class="os-tool-tab" style="display:none;">
+                        <ul class="list-disc list-inside space-y-1">
+                            <li><strong>活动监视器:</strong> 查看“内存压力”、“交换文件使用情况”和“硬错误”(Page Ins/Outs)。</li>
+                            <li><strong>`vm_stat` (命令行):</strong> 提供详细的虚拟内存统计，包括页面输入/输出数量。</li>
+                        </ul>
+                    </div>
+                    <div id="linux-tab" class="os-tool-tab" style="display:none;">
+                        <ul class="list-disc list-inside space-y-1">
+                            <li><strong>`top` / `htop`:</strong> 查看 VIRT, RES, SWAP。</li>
+                            <li><strong>`free -h`:</strong> 查看总内存、已用内存、空闲内存和交换空间使用。</li>
+                            <li><strong>`vmstat`:</strong> 报告内存、交换活动，关注 `si` (swap in) 和 `so` (swap out)。</li>
+                            <li><strong>`sar -B`:</strong> (需安装 `sysstat`) 报告分页统计，包括 `pgpgin/s` 和 `pgpgout/s`。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+             <div class="mt-8 p-6 bg-sky-50 rounded-lg shadow">
+                <h4 class="text-xl font-semibold text-sky-700 mb-3">高级监控与推断技巧：</h4>
+                <ul class="list-disc list-inside ml-4 mt-2 space-y-1 text-gray-700">
+                    <li>使用 Node.js `os` 模块 (`os.totalmem()`, `os.freemem()`) 结合应用 RSS 估算系统可用物理内存。</li>
+                    <li>监控应用响应时间，如 UI 渲染和用户操作响应，内存压力大时响应变慢可能与 Paging/Swapping 有关。</li>
+                    <li>考虑使用专业的 APM (Application Performance Management) 工具，如 Sentry, Datadog 等。</li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="optimization" class="content-section mb-16 scroll-mt-20">
+            <h2 class="text-center">优化 Electron 应用</h2>
+            <p class="text-center mb-10 max-w-2xl mx-auto">核心目标是减少 Electron 应用的内存占用，从而降低操作系统进行 Paging/Swapping 的必要性。</p>
+            <div class="space-y-8">
+                <div>
+                    <h3 class="text-emerald-600">优化渲染进程内存</h3>
+                    <div class="mt-4 space-y-3">
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">精简 UI/UX</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>避免过多的 DOM 元素和复杂的 CSS 动画，这些都会增加内存和渲染开销。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">按需加载</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>仅在用户需要时才加载视图、数据和组件。使用代码分割、懒加载等技术。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">虚拟化列表</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>对于长列表，使用如 `react-window` 或 `vue-virtual-scroller` 等库，只渲染可见区域的列表项。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">图片优化</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>压缩图片，按需加载图片，选择适当的图片格式 (如 WebP)。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">内存泄漏检测</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>利用 Chrome DevTools 的内存分析工具 (Memory tab)，定期进行 Heap Snapshot 比较，查找并修复内存泄漏。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">及时释放资源</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>在组件卸载、窗口关闭时，确保清除事件监听器、计时器、缓存数据等不再需要的资源。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-emerald-600">优化主进程内存</h3>
+                     <div class="mt-4 space-y-3">
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">避免在主进程中存储大量数据</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>主进程应尽可能轻量。如果需要共享大量数据，考虑使用 IPC 将数据存储在渲染进程，或使用外部数据库/文件存储。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">合理使用 Buffer</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>如果处理大量二进制数据，确保在使用完毕后及时释放 Buffer 对象，避免内存堆积。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">优化进程间通信 (IPC)</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>避免频繁或大量数据通过 IPC 传输，这可能导致不必要的内存拷贝和序列化/反序列化开销。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-emerald-600">合理配置 Electron</h3>
+                    <div class="mt-4 space-y-3">
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">禁用不必要的 Chromium 特性</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>通过 `webPreferences` 禁用应用不需要的 Chromium 特性，如 WebGL、WebRTC、拼写检查等，以减少内存占用。</p>
+                            </div>
+                        </div>
+                        <div class="optimization-tip bg-white p-4 rounded-lg shadow hover:shadow-md" onclick="toggleTip(this)">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">限制渲染进程数量</span>
+                                <span class="arrow text-emerald-600">&#x276F;</span>
+                            </div>
+                            <div class="tip-content text-sm text-gray-600">
+                                <p>每个渲染进程都有独立的内存开销。如果应用开启多个窗口或 `webview`，考虑是否可以合并某些功能到单个渲染进程中，或按需创建和销毁渲染进程。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-neutral-800 text-neutral-300 py-8 text-center">
+        <p>&copy; <span id="currentYear"></span> Electron 内存管理指南。所有权利保留。</p>
+    </footer>
+
+    <script>
+        document.getElementById('currentYear').textContent = new Date().getFullYear();
+
+        function toggleCard(element) {
+            element.classList.toggle('open');
+        }
+
+        function toggleTip(element) {
+            element.classList.toggle('active');
+        }
+
+        const ioSpeedChartCtx = document.getElementById('ioSpeedChart').getContext('2d');
+        new Chart(ioSpeedChartCtx, {
+            type: 'bar',
+            data: {
+                labels: ['内存 (RAM)', '固态硬盘 (SSD)', '机械硬盘 (HDD)'],
+                datasets: [{
+                    label: '典型访问时间 (对数尺度)',
+                    data: [100, 100000, 10000000], // 100ns, 100µs (100,000ns), 10ms (10,000,000ns)
+                    backgroundColor: [
+                        'rgba(59, 130, 246, 0.7)', // sky-500
+                        'rgba(16, 185, 129, 0.7)', // emerald-500
+                        'rgba(239, 68, 68, 0.7)'  // red-500
+                    ],
+                    borderColor: [
+                        'rgba(59, 130, 246, 1)',
+                        'rgba(16, 185, 129, 1)',
+                        'rgba(239, 68, 68, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                scales: {
+                    x: {
+                        type: 'logarithmic',
+                        title: {
+                            display: true,
+                            text: '访问时间 (纳秒 - ns)'
+                        },
+                        ticks: {
+                            callback: function(value, index, values) {
+                                if (value === 100) return '100 ns (RAM)';
+                                if (value === 100000) return '100 µs (SSD)';
+                                if (value === 10000000) return '10 ms (HDD)';
+                                return value;
+                            }
+                        }
+                    },
+                    y: {
+                         grid: {
+                            display: false
+                        }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                let value = context.raw;
+                                if (value === 100) return label + '约 100 纳秒';
+                                if (value === 100000) return label + '约 100 微秒';
+                                if (value === 10000000) return label + '约 10 毫秒';
+                                return label + value + ' ns';
+                            }
+                        }
+                    },
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+
+        function showOsToolTab(buttonElement, tabName) { // Modified to accept buttonElement
+            const tabs = document.querySelectorAll('.os-tool-tab');
+            tabs.forEach(tab => tab.style.display = 'none');
+            document.getElementById(tabName + '-tab').style.display = 'block';
+
+            const buttons = document.querySelectorAll('.tab-button');
+            buttons.forEach(button => button.classList.remove('active'));
+            buttonElement.classList.add('active'); // Use the passed buttonElement
+        }
+
+        // Initialize first tab for OS tools
+        // This ensures 'Windows' tab is active and displayed correctly on load
+        document.addEventListener('DOMContentLoaded', () => {
+            const windowsButton = document.querySelector('.tab-button[onclick*="windows"]');
+            if (windowsButton) {
+                showOsToolTab(windowsButton, 'windows');
+            }
+        });
+
+        // Smooth scrolling for nav links
+        document.querySelectorAll('nav a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const targetId = this.getAttribute('href');
+                const targetElement = document.querySelector(targetId);
+                if (targetElement) {
+                     targetElement.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+    </script>
+</body>
+</html>
